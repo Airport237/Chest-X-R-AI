@@ -18,7 +18,7 @@ print(f"Using device: {DEVICE}")
 
 # Load dataset
 print("\nPreparing dataset and dataloader...")
-dataset = ChestXRay14(transform=transform(), limit=1000)
+dataset = ChestXRay14(transform=transform(), limit=20000)
 dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
 # Initialize model

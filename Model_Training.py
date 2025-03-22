@@ -18,10 +18,10 @@ print(f"Using device: {DEVICE}")
 
 # Load dataset
 print("\nPreparing dataset and dataloader...")
-dataset = ChestXRay14(transform=transform(), limit=20000)
-dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
+dataset = ChestXRay14(transform=transform(), limit=35000)
+dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
 
-# Initialize model
+# Initialize model, loss function, optimizer
 model = ChestXRayCNN(num_classes=NUM_CLASSES).to(DEVICE)
 criterion = nn.BCEWithLogitsLoss()
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)

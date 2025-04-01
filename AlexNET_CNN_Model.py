@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import deeplake
-
+import matplotlib.pyplot as plt
 from torchvision import transforms
 from sklearn.metrics import f1_score, precision_score, recall_score, hamming_loss, accuracy_score
 
@@ -71,7 +71,7 @@ def get_transforms():
     transform_pipeline = transforms.Compose([
         # Convert grayscale images to 3-channel images.
         transforms.Grayscale(num_output_channels=3),
-        transforms.Resize((224, 224)),
+        transforms.Resize((227, 227)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                              std=[0.229, 0.224, 0.225])
@@ -80,36 +80,41 @@ def get_transforms():
     return transform_pipeline
 
 # Model Creation
-class BaselineCNN(nn.Module):
+class AlexNetCNN(nn.Module):
     def __init__(self, num_classes=15):
-        super(BaselineCNN, self).__init__()
+        super(AlexNetCNN, self).__init__()
         print("Building CNN Model")
         # The feature extracts image features using convolution, batch normalization
         # ReLU activations, and pooling to reduce dimensions
         self.features = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
+            nn.Conv2d(3, 96, kernel_size=11, stride=4),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),  # Reduces dimensions by a factor of 2
 
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(96, 256, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
 
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
+            nn.Conv2d(256, 384, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(384, 384, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(384, 256, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2)
         )
         """
-        The classifier takes the extracted features, performs global pooling, 
-        flattens them, and outputs logits for each class."""
+        The classifier runs FFNN layers to further learn features about the predictions
+        """
 
         self.classifier = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
-            nn.Linear(128, num_classes)  # Outputs raw logits for each class.
+            nn.Linear(9216, 4096),
+            nn.Linear(4096, 4096),
+            nn.Linear(4096, 1000),
+            # Outputs raw logits for each class.
+            nn.Linear(1000, num_classes)
+
         )
         print("CNN model built successfully!")
         print("Model Architecture:")
@@ -151,6 +156,8 @@ def convert_labels_to_multihot(raw_labels, num_classes=14):
 
 # Training Loop
 def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
+    epoch_losses = []
+    epochs = []
     print("Starting Training Loop........")
     model.to(device)
     print(device)
@@ -161,6 +168,7 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
     for epoch in range(num_epochs):
         print("\n---------------------------------------------")
         print(f"Epoch {epoch + 1}/{num_epochs}")
+        epochs += 1
         running_loss = 0.0
         batch_count = 0
         epoch_preds = []
@@ -203,11 +211,15 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
             epoch_targets.append(labels.detach().cpu())
 
         epoch_loss = running_loss / len(train_loader.dataset)
+        epoch_losses.append(epoch_loss)
         epoch_preds = torch.cat(epoch_preds, dim=0).numpy()
         epoch_targets = torch.cat(epoch_targets, dim=0).numpy()
 
+
+        plt.plot(epoch_losses, label='loss')
+
         # Calculating metrics
-        accuracy = accuracy_score(epoch_targets, epoch_preds)
+        accuracy = accuracy_score(epoch_targets, epoch_preds, zero_division=0)
         f1_micro = f1_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
         f1_macro = f1_score(epoch_targets, epoch_preds, average='macro', zero_division=0)
         precision = precision_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
@@ -267,10 +279,29 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
             outputs = torch.sigmoid(outputs)
             predicted = (outputs > 0.5).float()
 
+            ground_truth.append(labels.detach().cpu().numpy()[0])
+            predictions.append(predicted.detach().cpu().numpy()[0])
 
 
-            predictions.extend(predicted.cpu().numpy())
-            ground_truth.extend(labels.cpu().numpy())
+    # Calculating metrics
+
+    accuracy = accuracy_score(ground_truth, predictions)
+    f1_micro = f1_score(ground_truth, predictions, average='micro', zero_division=0)
+    f1_macro = f1_score(ground_truth, predictions, average='macro', zero_division=0)
+    precision = precision_score(ground_truth, predictions, average='micro', zero_division=0)
+    recall = recall_score(ground_truth, predictions, average='micro', zero_division=0)
+    hamming = hamming_loss(ground_truth, predictions)
+
+    print("\n=============================================")
+    print(f"Testing Finished")
+    print(f"Precision (micro): {precision:.4f}")
+    print(f"Recall (micro): {recall:.4f}")
+    print(f"F1 Score (micro): {f1_micro:.4f}")
+    print(f"F1 Score (macro): {f1_macro:.4f}")
+    print(f"Hamming Loss: {hamming:.4f}")
+    print(f"Accuracy: {accuracy:.4f}")
+    print("=============================================\n")
+
 
     correct = 0
     for i in range(len(ground_truth)):
@@ -286,8 +317,8 @@ def main():
     transform_pipeline = get_transforms()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-    model = BaselineCNN(num_classes=15)
-    train_model(model, train_loader, transform_pipeline, device, num_epochs=5)
+    model = AlexNetCNN(num_classes=15)
+    #train_model(model, train_loader, transform_pipeline, device, num_epochs=5)
     print("========== Model Training is Complete ==========")
     test(model, test_loader, transform_pipeline, device, saved_model = "model.pth")
 
@@ -299,11 +330,29 @@ if __name__ == "__main__":
 ##########################
 # RESULTS
 """
+=============================================
 Epoch 5 completed.
-Average Loss: 0.1251
-Precision (micro): 0.6679
-Recall (micro): 0.5605
-F1 Score (micro): 0.6095
-F1 Score (macro): 0.0523
-Hamming Loss: 0.0433"""
+Average Loss: 0.1989
+Precision (micro): 0.5837
+Recall (micro): 0.4801
+F1 Score (micro): 0.5268
+F1 Score (macro): 0.0490
+Hamming Loss: 0.0694
+Accuracy: 0.5796
+=============================================
+"""
 ##########################
+
+"""
+=============================================
+Testing Finished
+Precision (micro): 0.3550
+Recall (micro): 0.2459
+F1 Score (micro): 0.2905
+F1 Score (macro): 0.0349
+Hamming Loss: 0.1156
+Accuracy: 0.3550
+=============================================
+
+Accuracy: 35.500
+"""

@@ -267,18 +267,28 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
             outputs = torch.sigmoid(outputs)
             predicted = (outputs > 0.5).float()
 
+            ground_truth.append(labels.detach().cpu().numpy()[0])
+            predictions.append(predicted.detach().cpu().numpy()[0])
 
 
-            predictions.extend(predicted.cpu().numpy())
-            ground_truth.extend(labels.cpu().numpy())
+    # Calculating metrics
 
-    correct = 0
-    for i in range(len(ground_truth)):
-        if np.array_equal(ground_truth[i], predictions[i]):
-            correct += 1
+    accuracy = accuracy_score(ground_truth, predictions)
+    f1_micro = f1_score(ground_truth, predictions, average='micro', zero_division=0)
+    f1_macro = f1_score(ground_truth, predictions, average='macro', zero_division=0)
+    precision = precision_score(ground_truth, predictions, average='micro', zero_division=0)
+    recall = recall_score(ground_truth, predictions, average='micro', zero_division=0)
+    hamming = hamming_loss(ground_truth, predictions)
 
-    acc = correct / len(ground_truth)
-    print(f"Accuracy: {acc * 100:.3f}")
+    print("\n=============================================")
+    print(f"Testing Finished")
+    print(f"Precision (micro): {precision:.4f}")
+    print(f"Recall (micro): {recall:.4f}")
+    print(f"F1 Score (micro): {f1_micro:.4f}")
+    print(f"F1 Score (macro): {f1_macro:.4f}")
+    print(f"Hamming Loss: {hamming:.4f}")
+    print(f"Accuracy: {accuracy:.4f}")
+    print("=============================================\n")
 
 def main():
     print("========== Starting Model Training Process ==========")

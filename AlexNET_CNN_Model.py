@@ -168,7 +168,7 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
     for epoch in range(num_epochs):
         print("\n---------------------------------------------")
         print(f"Epoch {epoch + 1}/{num_epochs}")
-        epochs += 1
+        epochs.append(epoch + 1)
         running_loss = 0.0
         batch_count = 0
         epoch_preds = []
@@ -217,9 +217,12 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
 
 
         plt.plot(epoch_losses, label='loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.savefig("Loss Graph")
 
         # Calculating metrics
-        accuracy = accuracy_score(epoch_targets, epoch_preds, zero_division=0)
+        accuracy = accuracy_score(epoch_targets, epoch_preds, zero_division=1)
         f1_micro = f1_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
         f1_macro = f1_score(epoch_targets, epoch_preds, average='macro', zero_division=0)
         precision = precision_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
@@ -303,14 +306,6 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
     print("=============================================\n")
 
 
-    correct = 0
-    for i in range(len(ground_truth)):
-        if np.array_equal(ground_truth[i], predictions[i]):
-            correct += 1
-
-    acc = correct / len(ground_truth)
-    print(f"Accuracy: {acc * 100:.3f}")
-
 def main():
     print("========== Starting Model Training Process ==========")
     train_loader, test_loader, ds_train, ds_test = custom_get_data()
@@ -318,7 +313,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     model = AlexNetCNN(num_classes=15)
-    #train_model(model, train_loader, transform_pipeline, device, num_epochs=5)
+    train_model(model, train_loader, transform_pipeline, device, num_epochs=5)
     print("========== Model Training is Complete ==========")
     test(model, test_loader, transform_pipeline, device, saved_model = "model.pth")
 

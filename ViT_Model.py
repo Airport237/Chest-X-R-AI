@@ -17,14 +17,13 @@ from sklearn.metrics import f1_score, precision_score, recall_score, hamming_los
 from transformers import ViTForImageClassification, ViTImageProcessor
 from PIL import Image
 
-# Custom Collate Function
+
 def custom_collate_fn(batch):
     collated = {}
     for key in batch[0].keys():
         collated[key] = [sample[key] for sample in batch]
     return collated
 
-# Data Loading Function
 def custom_get_data(batch_size=32):
     print("Data Loading......")
     print("Loading training dataset from DeepLake...")
@@ -57,7 +56,6 @@ def custom_get_data(batch_size=32):
     print("DataLoaders created successfully!")
     return train_loader, test_loader, ds_train, ds_test
 
-# Preprocessing
 def get_transforms():
     print("Preprocessing Pipeline........")
     processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224-in21k")
@@ -70,7 +68,6 @@ def get_transforms():
     print("Preprocessing pipeline is ready.")
     return transform_fn
 
-# Model Creation
 class ViTModelWrapper(nn.Module):
     def __init__(self, num_classes=15):
         super(ViTModelWrapper, self).__init__()
@@ -87,7 +84,6 @@ class ViTModelWrapper(nn.Module):
     def forward(self, x):
         return self.model(x).logits
 
-# Label Conversion Helper
 def convert_labels_to_multihot(raw_labels, num_classes=15):
     processed_labels = []
     for label in raw_labels:
@@ -102,7 +98,6 @@ def convert_labels_to_multihot(raw_labels, num_classes=15):
         processed_labels.append(multi_hot)
     return torch.stack(processed_labels)
 
-# Training Loop
 def train_model(model, train_loader, transform_pipeline, device, num_epochs=3):
     epoch_losses = []
     print("Starting Training Loop........")
@@ -185,12 +180,12 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=3):
     print("Saving model as 'model.pth'")
     torch.save(model.state_dict(), "model.pth")
 
-# Main function
+
 def main():
     print("========== Starting Model Training Process ==========")
     train_loader, test_loader, ds_train, ds_test = custom_get_data(batch_size=32)
     transform_pipeline = get_transforms()
-    device = torch.device("cpu")  # Using CPU to avoid SIGKILL issues
+    device = torch.device("cpu")
     print(f"Using device: {device}")
     model = ViTModelWrapper(num_classes=15)
     train_model(model, train_loader, transform_pipeline, device, num_epochs=3)

@@ -3,7 +3,7 @@ This single Python file combines all the tasks required for our project:
     1. Data loading from DeepLake.
     2. Preprocessing of images.
     3. Vision Transformer model creation.
-    4. Training loop with metric calculations and AUC.
+    4. Training and Testing loop with metric calculations and AUC.
 """
 
 import numpy as np
@@ -13,9 +13,10 @@ import torch.optim as optim
 import deeplake
 import matplotlib.pyplot as plt
 from torchvision import transforms
-from sklearn.metrics import f1_score, precision_score, recall_score, hamming_loss, accuracy_score, roc_auc_score, roc_curve
+from sklearn.metrics import f1_score, precision_score, recall_score, hamming_loss, accuracy_score, roc_auc_score
 from transformers import ViTForImageClassification, ViTImageProcessor
 from PIL import Image
+import time
 
 
 def custom_collate_fn(batch):
@@ -24,20 +25,10 @@ def custom_collate_fn(batch):
         collated[key] = [sample[key] for sample in batch]
     return collated
 
+
 def custom_get_data(batch_size=32):
-    print("Data Loading......")
-    print("Loading training dataset from DeepLake...")
     ds_train = deeplake.load('hub://activeloop/nih-chest-xray-train')
-    print("Training dataset loaded successfully!")
-
-    print("Loading test dataset from DeepLake...")
     ds_test = deeplake.load('hub://activeloop/nih-chest-xray-test')
-    print("Test dataset loaded successfully!")
-
-    print(f"Total training samples: {len(ds_train)}")
-    print(f"Total test samples: {len(ds_test)}")
-
-    print("Creating DataLoaders with custom collate function...")
     train_loader = ds_train.pytorch(
         num_workers=2,
         batch_size=batch_size,
@@ -45,44 +36,35 @@ def custom_get_data(batch_size=32):
         decode_method={"images": "pil"},
         collate_fn=custom_collate_fn
     )
-
     test_loader = ds_test.pytorch(
         batch_size=batch_size,
         shuffle=False,
         decode_method={"images": "pil"},
         collate_fn=custom_collate_fn
     )
-
-    print("DataLoaders created successfully!")
     return train_loader, test_loader, ds_train, ds_test
 
-def get_transforms():
-    print("Preprocessing Pipeline........")
-    processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224-in21k")
 
+def get_transforms():
+    processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224-in21k")
     def transform_fn(pil_img):
         if pil_img.mode != "RGB":
             pil_img = pil_img.convert("RGB")
         return processor(images=pil_img, return_tensors="pt")["pixel_values"].squeeze(0)
-
-    print("Preprocessing pipeline is ready.")
     return transform_fn
+
 
 class ViTModelWrapper(nn.Module):
     def __init__(self, num_classes=15):
         super(ViTModelWrapper, self).__init__()
-        print("Building Vision Transformer Model...")
         self.model = ViTForImageClassification.from_pretrained(
             "google/vit-base-patch16-224-in21k",
             num_labels=num_classes,
             ignore_mismatched_sizes=True
         )
-        print("ViT model built successfully!")
-        print("Model Architecture:")
-        print(self.model)
-
     def forward(self, x):
         return self.model(x).logits
+
 
 def convert_labels_to_multihot(raw_labels, num_classes=15):
     processed_labels = []
@@ -98,43 +80,33 @@ def convert_labels_to_multihot(raw_labels, num_classes=15):
         processed_labels.append(multi_hot)
     return torch.stack(processed_labels)
 
-def train_model(model, train_loader, transform_pipeline, device, num_epochs=3):
+
+def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
     epoch_losses = []
-    print("Starting Training Loop........")
+    epoch_accuracies = []
     model.to(device)
-    print(f"Training on device: {device}")
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
     model.train()
 
     for epoch in range(num_epochs):
-        print("\n---------------------------------------------")
-        print(f"Epoch {epoch + 1}/{num_epochs}")
+        start_time = time.time()
         running_loss = 0.0
-        batch_count = 0
         epoch_preds = []
         epoch_targets = []
 
         for batch in train_loader:
-            batch_count += 1
-            print(f"\nProcessing batch {batch_count}...")
-
             pil_images = batch.get("images")
             processed_images = [transform_pipeline(img) for img in pil_images]
             images = torch.stack(processed_images).to(device)
-
             raw_labels = batch.get("labels") or batch.get("findings")
             labels = convert_labels_to_multihot(raw_labels, num_classes=15).to(device)
-
             optimizer.zero_grad()
             outputs = model(images)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-
             running_loss += loss.item() * images.size(0)
-            print(f"  Batch {batch_count} Loss: {loss.item():.4f}")
-
             preds = (torch.sigmoid(outputs) > 0.5).float()
             epoch_preds.append(preds.detach().cpu())
             epoch_targets.append(labels.detach().cpu())
@@ -144,52 +116,88 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=3):
         epoch_preds = torch.cat(epoch_preds, dim=0).numpy()
         epoch_targets = torch.cat(epoch_targets, dim=0).numpy()
 
-        plt.figure()
-        plt.plot(range(1, len(epoch_losses)+1), epoch_losses, marker='o')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.title('Training Loss Curve')
-        plt.savefig("Loss Graph")
-        plt.close()
-
         try:
             auc = roc_auc_score(epoch_targets, epoch_preds, average='macro')
             print(f"AUC Score (macro): {auc:.4f}")
         except:
-            print("AUC Score could not be computed for this epoch.")
+            auc = float('nan')
 
         accuracy = accuracy_score(epoch_targets, epoch_preds)
-        f1_micro = f1_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
-        f1_macro = f1_score(epoch_targets, epoch_preds, average='macro', zero_division=0)
-        precision = precision_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
-        recall = recall_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
+        epoch_accuracies.append(accuracy)
+        f1_micro = f1_score(epoch_targets, epoch_preds, average='micro')
+        f1_macro = f1_score(epoch_targets, epoch_preds, average='macro')
+        precision = precision_score(epoch_targets, epoch_preds, average='micro')
+        recall = recall_score(epoch_targets, epoch_preds, average='micro')
         hamming = hamming_loss(epoch_targets, epoch_preds)
 
-        print("\n=============================================")
-        print(f"Epoch {epoch + 1} completed.")
-        print(f"Average Loss: {epoch_loss:.4f}")
-        print(f"Precision (micro): {precision:.4f}")
-        print(f"Recall (micro): {recall:.4f}")
-        print(f"F1 Score (micro): {f1_micro:.4f}")
-        print(f"F1 Score (macro): {f1_macro:.4f}")
-        print(f"Hamming Loss: {hamming:.4f}")
-        print(f"Accuracy: {accuracy:.4f}")
-        print("=============================================\n")
+        print(f"\nEpoch {epoch + 1}/{num_epochs} finished in {time.time() - start_time:.2f} seconds")
+        print(f"Average Loss: {epoch_loss:.4f}\nAccuracy: {accuracy:.4f}\nPrecision: {precision:.4f}\nRecall: {recall:.4f}\nF1 Micro: {f1_micro:.4f}\nF1 Macro: {f1_macro:.4f}\nHamming Loss: {hamming:.4f}")
 
-    print("========== Training Loop Finished ==========")
-    print("Saving model as 'model.pth'")
+    plt.figure()
+    plt.plot(range(1, len(epoch_losses)+1), epoch_losses, label='Loss')
+    plt.plot(range(1, len(epoch_accuracies)+1), epoch_accuracies, label='Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Value')
+    plt.title('Loss and Accuracy over Epochs')
+    plt.legend()
+    plt.savefig("training_metrics.png")
+    plt.close()
     torch.save(model.state_dict(), "model.pth")
 
 
+def test(model, test_loader, transform_pipeline, device, saved_model="model.pth"):
+    model.load_state_dict(torch.load(saved_model))
+    model.eval()
+    model.to(device)
+    ground_truth = []
+    predictions = []
+
+    with torch.no_grad():
+        for batch in test_loader:
+            pil_images = batch.get("images")
+            processed_images = [transform_pipeline(img) for img in pil_images]
+            images = torch.stack(processed_images).to(device)
+            raw_labels = batch.get("labels") or batch.get("findings")
+            labels = convert_labels_to_multihot(raw_labels, num_classes=15).to(device)
+            outputs = model(images)
+            outputs = torch.sigmoid(outputs)
+            predicted = (outputs > 0.5).float()
+            ground_truth.append(labels.cpu().numpy())
+            predictions.append(predicted.cpu().numpy())
+
+    ground_truth = np.concatenate(ground_truth, axis=0)
+    predictions = np.concatenate(predictions, axis=0)
+
+    try:
+        auc = roc_auc_score(ground_truth, predictions, average='macro')
+        print(f"AUC Score (macro): {auc:.4f}")
+    except:
+        print("AUC Score could not be computed.")
+
+    accuracy = accuracy_score(ground_truth, predictions)
+    f1_micro = f1_score(ground_truth, predictions, average='micro')
+    f1_macro = f1_score(ground_truth, predictions, average='macro')
+    precision = precision_score(ground_truth, predictions, average='micro')
+    recall = recall_score(ground_truth, predictions, average='micro')
+    hamming = hamming_loss(ground_truth, predictions)
+
+    print(f"\nTesting Finished\nAccuracy: {accuracy:.4f}\nPrecision: {precision:.4f}\nRecall: {recall:.4f}\nF1 Micro: {f1_micro:.4f}\nF1 Macro: {f1_macro:.4f}\nHamming Loss: {hamming:.4f}")
+
+    plt.figure()
+    plt.plot(predictions.mean(axis=1), label='Prediction Confidence')
+    plt.title('Average Prediction Confidence')
+    plt.savefig("test_prediction_confidence.png")
+    plt.close()
+
+
 def main():
-    print("========== Starting Model Training Process ==========")
     train_loader, test_loader, ds_train, ds_test = custom_get_data(batch_size=32)
     transform_pipeline = get_transforms()
     device = torch.device("cpu")
-    print(f"Using device: {device}")
     model = ViTModelWrapper(num_classes=15)
-    train_model(model, train_loader, transform_pipeline, device, num_epochs=3)
-    print("========== Model Training is Complete ==========")
+    train_model(model, train_loader, transform_pipeline, device, num_epochs=5)
+    test(model, test_loader, transform_pipeline, device)
+
 
 if __name__ == "__main__":
     main()

@@ -5,15 +5,15 @@ This single Python file combines all the tasks required for our project:
     3. CNN model creation.
     4. Training loop with metric calculations.
 """
+from datetime import datetime
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import deeplake
 import matplotlib.pyplot as plt
-from torchvision import transforms
-import cv2
-
+from torchvision import transforms, models
 from sklearn.metrics import f1_score, precision_score, recall_score, hamming_loss, accuracy_score, roc_auc_score
 
 
@@ -56,7 +56,7 @@ def custom_get_data():
     )
 
     test_loader = ds_test.pytorch(
-        batch_size=32,
+        batch_size=64,
         shuffle=False,
         decode_method={"images": "pil"},
         collate_fn=custom_collate_fn
@@ -81,101 +81,36 @@ def get_transforms():
     print("Preprocessing pipeline is ready.")
     return transform_pipeline
 
-# Model Creation
-class AlexNetCNN(nn.Module):
-    def __init__(self, num_classes=15):
-        super(AlexNetCNN, self).__init__()
-        print("Building CNN Model")
-        # The feature extracts image features using convolution, batch normalization
-        # ReLU activations, and pooling to reduce dimensions
-
-        self.layer1 = nn.Conv2d(3, 96, kernel_size=11, stride=4)
-        self.layer2 = nn.Conv2d(96, 256, kernel_size=3, padding=1)
-        self.layer3 = nn.Conv2d(256, 384, kernel_size=3, padding=1)
-        self.layer4 = nn.Conv2d(384, 384, kernel_size=3, padding=1)
-        self.layer5 = nn.Conv2d(384, 256, kernel_size=3, padding=1)
-
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(2)
-
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 96, kernel_size=11, stride=4),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),  # Reduces dimensions by a factor of 2
-
-            nn.Conv2d(96, 256, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
-
-            nn.Conv2d(256, 384, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(384, 384, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(384, 256, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            #nn.MaxPool2d(2)
-        )
-        """
-        The classifier runs FFNN layers to further learn features about the predictions
-        """
-
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(9216, 4096),
-            nn.ReLU(inplace=True),
-            nn.Linear(4096, 4096),
-            nn.ReLU(inplace=True),
-            nn.Linear(4096, 1000),
-            nn.ReLU(inplace=True),
-            # Outputs raw logits for each class.
-            nn.Linear(1000, num_classes)
-
-        )
-        print("CNN model built successfully!")
-        print("Model Architecture:")
-        print(self)
-
-        self.gradients = None
-
-    def activations_hook(self, grad):
-        self.gradients = grad
-
-    def forward(self, x):
-        # x = self.layer1(x)
-        # x = self.relu(x)
-        # x = self.maxpool(x)
-        # x = self.layer2(x)
-        # x = self.relu(x)
-        # x = self.maxpool(x)
-        # x = self.layer3(x)
-        # x = self.relu(x)
-        # x = self.layer4(x)
-        # x = self.relu(x)
-        # x = self.layer5(x)
-        # x = self.relu(x)
-        x = self.features(x)
-
-        #if x.requires_grad:
-        h = x.register_hook(self.activations_hook)
-
-        x = self.maxpool(x)
-
-        x = self.classifier(x)
-        return x
-
-    def get_activations_gradient(self):
-        return self.gradients
-
-    def get_activations(self, x):
-        return self.features(x)
+# # Model Creation
+# class AlexNetCNN(nn.Module):
+#     def __init__(self, num_classes=15):
+#         super(AlexNetCNN, self).__init__()
+#         print("Building CNN Model")
+#
+#         self.pre = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+#         self.fc = nn.Linear(self.fc.in_features, num_classes)
+#
+#         # The feature extracts image features using convolution, batch normalization
+#         # ReLU activations, and pooling to reduce dimensions
+#
+#
+#         print("CNN model built successfully!")
+#         print("Model Architecture:")
+#         print(self)
+#
+#     def forward(self, x):
+#         x = self.pre(x)
+#         x = self.features(x)
+#         x = self.classifier(x)
+#         return x
 
 
 # Label Conversion Helper
-def convert_labels_to_multihot(raw_labels, num_classes=14):
+def convert_labels_to_multihot(raw_labels, num_classes=15):
     """
     Many sample have labels of variable lengths, which causes errors when stacking,
     Tjis function converts each samples's labels into a fixed-length multi-hot vector.
-    Each index in the vector corresponds to one of the 14 classes.
+    Each index in the vector corresponds to one of the 15 classes.
     """
     processed_labels = []
     for label in raw_labels:
@@ -206,17 +141,21 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
     model.to(device)
     print(device)
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=0.01)
     model.train()
 
-    for epoch in range(num_epochs):
+    for epoch in range(1, num_epochs):
         print("\n---------------------------------------------")
-        print(f"Epoch {epoch + 1}/{num_epochs}")
-        epochs.append(epoch + 1)
+        print(f"Epoch {epoch}/{num_epochs}")
+        epochs.append(epoch)
         running_loss = 0.0
         batch_count = 0
         epoch_preds = []
         epoch_targets = []
+
+        # if (epoch % 10 == 0):
+        #     for group in optimizer.param_groups:
+        #         group['lr'] /= 10
 
         for batch in train_loader:
             batch_count += 1
@@ -238,7 +177,7 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
                 raise KeyError("No label key found in batch (expected 'labels' or 'findings').")
 
             # Convert raw labels into fixed-length multi-hot vectors.
-            labels = convert_labels_to_multihot(raw_labels, num_classes=15).float().to(device)
+            labels = convert_labels_to_multihot(raw_labels, num_classes=15).to(device)
 
             optimizer.zero_grad()
             outputs = model(images)
@@ -263,9 +202,11 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
         plt.plot(epoch_losses, label='loss')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
-        plt.savefig("Loss Graph")
+        plt.savefig("Google Loss Graph 10 Epoch")
 
         # Calculating metrics
+        auc = roc_auc_score(epoch_targets, epoch_preds)
+
         f1_micro = f1_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
         f1_macro = f1_score(epoch_targets, epoch_preds, average='macro', zero_division=0)
         precision = precision_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
@@ -273,18 +214,20 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
         hamming = hamming_loss(epoch_targets, epoch_preds)
 
         print("\n=============================================")
-        print(f"Epoch {epoch + 1} completed.")
+        print(f"Epoch {epoch} completed.")
         print(f"Average Loss: {epoch_loss:.4f}")
         print(f"Precision (micro): {precision:.4f}")
         print(f"Recall (micro): {recall:.4f}")
         print(f"F1 Score (micro): {f1_micro:.4f}")
         print(f"F1 Score (macro): {f1_macro:.4f}")
         print(f"Hamming Loss: {hamming:.4f}")
+        print(f"AUC: {auc:.4f}")
+
         print("=============================================\n")
 
     print("========== Training Loop Finished ==========")
-    print("Saving model as 'model.pth'")
-    torch.save(model.state_dict(), "Alex.pth")
+    print("Saving model as 'google.pth'")
+    torch.save(model.state_dict(), "google.pth")
 
 
 def test(model, test_loader, transform_pipeline, device, saved_model = ""):
@@ -298,8 +241,7 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
     ground_truth = []
     predictions = []
 
-    #Trying enabled gradient for GRAD-CAM
-    with torch.set_grad_enabled(True):
+    with torch.no_grad():
 
         for i, batch in enumerate(test_loader):
             print(f"Testing Batch #{i} of {len(test_loader)}")
@@ -331,13 +273,14 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
 
     # Calculating metrics
 
-    #accuracy = accuracy_score(ground_truth, predictions)
+    accuracy = accuracy_score(ground_truth, predictions)
     f1_micro = f1_score(ground_truth, predictions, average='micro', zero_division=0)
     f1_macro = f1_score(ground_truth, predictions, average='macro', zero_division=0)
     precision = precision_score(ground_truth, predictions, average='micro', zero_division=0)
     recall = recall_score(ground_truth, predictions, average='micro', zero_division=0)
     hamming = hamming_loss(ground_truth, predictions)
     auc = roc_auc_score(ground_truth, predictions)
+
 
     print("\n=============================================")
     print(f"Testing Finished")
@@ -346,130 +289,57 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
     print(f"F1 Score (micro): {f1_micro:.4f}")
     print(f"F1 Score (macro): {f1_macro:.4f}")
     print(f"Hamming Loss: {hamming:.4f}")
+    print(f"Accuracy: {accuracy:.4f}")
     print(f"AUC: {auc:.4f}")
-    #print(f"Accuracy: {accuracy:.4f}")
+
     print("=============================================\n")
 
-def visualize(model, test_loader, transform_pipeline, saved_model):
-    if (saved_model != ""):
-        model.load_state_dict(torch.load(saved_model))
+def visualize(model):
     model.eval()
     # Get the first conv layer
+    first_conv_layer = model.inception3a
+
+    # Get the weights (filters) as a tensor
+    filters = first_conv_layer.branch1.conv.weight.data.clone()
+
+    min_val = filters.min()
+    max_val = filters.max()
+    filters = (filters - min_val) / (max_val - min_val)
 
 
-    activation = {}
-
-    def get_activation(name):
-        def hook(model, input, output):
-            activation[name] = output.detach()
-        return hook
-
-    model.layer1.register_forward_hook(get_activation("features"))
-    for batch in test_loader:
-        orig_im = batch.get("images")[0]
-        images = batch.get("images")[0]
-        processed_images = [transform_pipeline(images)]
-        images = torch.stack(processed_images)
-        break
-    output = model(images)
-    act = activation["layer1"]
-    act2 = activation["layer5"]
-
-    fig, axarr = plt.subplots(4, 4, figsize=(12, 12))
-
-    for idx in range(16):  # Visualize first 16 feature maps
-        ax = axarr[idx // 4, idx % 4]
-        ax.imshow(act[0][idx].cpu(), cmap='viridis')
-        ax.axis('off')
-
-    plt.tight_layout()
+    num = 6
+    plt.figure(figsize=(num * 2, 2))
+    for i in range(num):
+        filter_img = filters[i].permute(1, 2, 0)  # CHW -> HWC
+        plt.subplot(1, num, i + 1)
+        plt.imshow(filter_img)
+        plt.axis('off')
     plt.show()
-
-    fig3, axarr3 = plt.subplots(4, 4, figsize=(12, 12))
-
-    for idx in range(16):  # Visualize first 16 feature maps
-        ax = axarr3[idx // 4, idx % 4]
-        ax.imshow(act2[0][idx].cpu(), cmap='viridis')
-        ax.axis('off')
-
-    plt.tight_layout()
-    plt.show()
-
-    fig2, ax2 = plt.subplots()
-    ax2.imshow(orig_im, cmap='viridis')
-    ax2.axis('off')
-
-    plt.tight_layout()
-    plt.show()
-
-
-def grad_cam(model, test_loader, transform_pipeline, device, saved_model):
-    if (saved_model != ""):
-        model.load_state_dict(torch.load(saved_model))
-    model.eval()
-
-    #Track Grads for GRAD-CAM
-    with torch.set_grad_enabled(True):
-
-        for batch in test_loader:
-            orig_im = batch.get("images")[0]
-            images = batch.get("images")[0]
-            processed_images = [transform_pipeline(images)]
-            images = torch.stack(processed_images)
-            images.requires_grad = True
-            break
-
-        outputs = model(images)
-        outputs = torch.sigmoid(outputs)
-        predicted = (outputs > 0.5).float().argmax(dim=1)
-        model.zero_grad()
-        #Choose the class you want to analyze
-        outputs[0, predicted].backward()
-
-        gradients = model.get_activations_gradient()
-
-        pooled_gradients = torch.mean(gradients, dim=(0, 2, 3))
-
-        activations = model.get_activations(images).detach()
-
-        for i in range(255):
-            activations[:, i, :, :] *= pooled_gradients[i]
-
-        heatmap = torch.mean(activations, dim=1).squeeze()
-        heatmap = np.maximum(heatmap, 0)
-        heatmap /= torch.max(heatmap)
-        plt.matshow(heatmap.squeeze())
-
-        #Image size hard coded as 227 x 227 for now
-        heatmap = cv2.resize(heatmap.detach().cpu().numpy(), (227, 227))
-        heatmap = np.uint8(255 * heatmap)
-        heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-
-        #Justi grabs one imgage for now
-        img = images.detach().cpu().numpy()[0]
-        # convert to [H, W, C]
-        img = np.transpose(img, (1, 2, 0))
-        # scale and convert to uint8
-        img = (img * 255).astype(np.uint8)
-
-        superimposed_img = cv2.addWeighted(heatmap, 0.4, img, 0.6, 0)
-        cv2.imwrite('./map.jpg', superimposed_img)
-        cv2.imwrite('./heatmap.jpg', heatmap)
-
 
 
 def main():
     print("========== Starting Model Training Process ==========")
+    start = datetime.now()
+    print("Start time: ", start.strftime("%H:%M:%S"))
     train_loader, test_loader, ds_train, ds_test = custom_get_data()
     transform_pipeline = get_transforms()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-    model = AlexNetCNN(num_classes=15)
-    #train_model(model, train_loader, transform_pipeline, device, num_epochs=1)
+    #model = AlexNetCNN(num_classes=15)\
+    num_classes = 15
+    #Pretrained on IMAGENET1K_V1
+    model = models.googlenet(weights=models.GoogLeNet_Weights.DEFAULT)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+
+    train_model(model, train_loader, transform_pipeline, device, num_epochs=10)
     print("========== Model Training is Complete ==========")
-    #test(model, test_loader, transform_pipeline, device, saved_model = "Alex.pth")
-    #visualize(model, test_loader, transform_pipeline)
-    grad_cam(model, test_loader, transform_pipeline, device,"Alex.pth")
+    finish = datetime.now()
+
+    # Print the time in HH:MM:SS format
+    print("Finish time:", finish.strftime("%H:%M:%S"))
+    print("Total Training time:", finish - start)
+    test(model, test_loader, transform_pipeline, device, saved_model = "google.pth")
+    #visualize(model)
 
 
 
@@ -504,19 +374,4 @@ Accuracy: 0.3550
 =============================================
 
 Accuracy: 35.500
-"""
-
-
-
-"""
-10 Epoch LR 0.01 Batch 64 Current Model pth for resnet.pth
-=============================================
-Testing Finished
-Precision (micro): 0.5613
-Recall (micro): 0.1513
-F1 Score (micro): 0.2384
-F1 Score (macro): 0.0638
-Hamming Loss: 0.0927
-AUC: 0.5170
-=============================================
 """

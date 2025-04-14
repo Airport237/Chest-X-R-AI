@@ -144,7 +144,7 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
     plt.close()
     torch.save(model.state_dict(), "model.pth")
 
-
+"""
 def test(model, test_loader, transform_pipeline, device, saved_model="model.pth"):
     model.load_state_dict(torch.load(saved_model))
     model.eval()
@@ -189,15 +189,79 @@ def test(model, test_loader, transform_pipeline, device, saved_model="model.pth"
     plt.savefig("test_prediction_confidence.png")
     plt.close()
 
-
+"""
 def main():
     train_loader, test_loader, ds_train, ds_test = custom_get_data(batch_size=32)
     transform_pipeline = get_transforms()
     device = torch.device("cpu")
     model = ViTModelWrapper(num_classes=15)
     train_model(model, train_loader, transform_pipeline, device, num_epochs=5)
-    test(model, test_loader, transform_pipeline, device)
+    # test(model, test_loader, transform_pipeline, device)
+
 
 
 if __name__ == "__main__":
     main()
+"""
+AUC Score (macro): 0.5166
+
+Epoch 1/5 finished in 11790.19 seconds
+Average Loss: 0.1834
+Accuracy: 0.4820
+Precision: 0.6935
+Recall: 0.4086
+F1 Micro: 0.5142
+F1 Macro: 0.0707
+Hamming Loss: 0.0621
+AUC Score (macro): 0.5310
+
+Epoch 2/5 finished in 11900.85 seconds
+Average Loss: 0.1639
+Accuracy: 0.4945
+Precision: 0.7196
+Recall: 0.4347
+F1 Micro: 0.5420
+F1 Macro: 0.1085
+Hamming Loss: 0.0591
+AUC Score (macro): 0.5467
+
+Epoch 3/5 finished in 11908.96 seconds
+Average Loss: 0.1558
+Accuracy: 0.5099
+Precision: 0.7293
+Recall: 0.4604
+F1 Micro: 0.5645
+F1 Macro: 0.1539
+Hamming Loss: 0.0572
+AUC Score (macro): 0.5707
+
+Epoch 4/5 finished in 11838.62 seconds
+Average Loss: 0.1460
+Accuracy: 0.5350
+Precision: 0.7463
+Recall: 0.5003
+F1 Micro: 0.5990
+F1 Macro: 0.2162
+Hamming Loss: 0.0539
+AUC Score (macro): 0.6061
+
+Epoch 5/5 finished in 11876.27 seconds
+Average Loss: 0.1312
+Accuracy: 0.5712
+Precision: 0.7745
+Recall: 0.5569
+F1 Micro: 0.6480
+F1 Macro: 0.2978
+Hamming Loss: 0.0487
+AUC Score (macro): 0.5524
+
+Testing Finished
+Accuracy: 0.2667
+Precision: 0.5142
+Recall: 0.2759
+F1 Micro: 0.3591
+F1 Macro: 0.1794
+Hamming Loss: 0.0951
+
+Process finished with exit code 0
+"""

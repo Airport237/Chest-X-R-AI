@@ -1,0 +1,7 @@
+numpy~=1.26.4
+matplotlib~=3.9.4
+opencv-python~=4.11.0.86
+torch~=2.6.0+cu118
+deeplake~=3.9.44
+torchvision~=0.21.0+cu118
+scikit-learn~=1.6.1

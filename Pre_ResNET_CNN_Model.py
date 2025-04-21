@@ -490,9 +490,9 @@ def main():
     # model.fc = nn.Linear(model.fc.in_features, num_classes)
     model = ResNet()
 
-    train_model(model, train_loader, transform_pipeline, device, num_epochs=3, saved_model = "resnetInter.pth")
+    train_model(model, train_loader, transform_pipeline, device, num_epochs=5, saved_model = "resnetInter.pth")
     print("========== Model Training is Complete ==========")
-    test(model, test_loader, transform_pipeline, device, saved_model = "resnet.pth")
+    test(model, test_loader, transform_pipeline, device, saved_model = "resnetInter.pth")
     #visualize(model)
     #grad_cam(model=model, test_loader=test_loader, transform_pipeline=transform_pipeline,device=device,saved_model="resnet.pth")
 

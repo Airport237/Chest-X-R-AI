@@ -13,12 +13,9 @@ import torch.optim as optim
 import deeplake
 import matplotlib.pyplot as plt
 import torchvision
-from torchvision import transforms, models
-from sklearn.metrics import f1_score, precision_score, recall_score, hamming_loss, accuracy_score, roc_auc_score
-from pytorch_grad_cam import GuidedBackpropReLUModel, GradCAM
-from pytorch_grad_cam.utils.image import (
-    show_cam_on_image, deprocess_image, preprocess_image
-)
+from torchvision import transforms
+from sklearn.metrics import f1_score, precision_score, recall_score, hamming_loss, roc_auc_score
+
 
 finding_map = {0: "No Finding", 1: "Hernia", 2: 'Emphysema', 3: 'Nodule', 4: 'Pnemonia', 5: 'Consolidation',
                6: 'Cardiomegaly', 7: 'Effusion', 8: 'Mass', 9: 'Pleural_Thickening', 10: 'Atelectasis',

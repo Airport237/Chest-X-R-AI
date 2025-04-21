@@ -5,16 +5,42 @@ This single Python file combines all the tasks required for our project:
     3. CNN model creation.
     4. Training loop with metric calculations.
 """
+import cv2
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import deeplake
 import matplotlib.pyplot as plt
-from torchvision import transforms
-import cv2
-
+import torchvision
+from torchvision import transforms, models
 from sklearn.metrics import f1_score, precision_score, recall_score, hamming_loss, accuracy_score, roc_auc_score
+from pytorch_grad_cam import GuidedBackpropReLUModel, GradCAM
+from pytorch_grad_cam.utils.image import (
+    show_cam_on_image, deprocess_image, preprocess_image
+)
+
+finding_map = {0: "No Finding", 1: "Hernia", 2: 'Emphysema', 3: 'Nodule', 4: 'Pnemonia', 5: 'Consolidation',
+               6: 'Cardiomegaly', 7: 'Effusion', 8: 'Mass', 9: 'Pleural_Thickening', 10: 'Atelectasis',
+               11: 'Pneumothorax', 12: 'Fibrosis', 13: 'Infiltration', 14: 'Edema'}
+"""
+Mapping of finding number to finding
+0: No Finding
+1: Hernia
+2: Emphysema
+3: Nodule
+4: Pneumonia
+5: Consolidation
+6: Cardiomegaly
+7: Effusion
+8: Mass
+9: Pleural_Thickening
+10:Atelectasis
+11:Pneumothorax
+12:Fibrosis
+13:Infiltration
+14:Edema
+"""
 
 
 # Custom Collate Function
@@ -56,7 +82,7 @@ def custom_get_data():
     )
 
     test_loader = ds_test.pytorch(
-        batch_size=32,
+        batch_size=64,
         shuffle=False,
         decode_method={"images": "pil"},
         collate_fn=custom_collate_fn
@@ -81,93 +107,69 @@ def get_transforms():
     print("Preprocessing pipeline is ready.")
     return transform_pipeline
 
-# Model Creation
-class AlexNetCNN(nn.Module):
-    def __init__(self, num_classes=15):
-        super(AlexNetCNN, self).__init__()
-        print("Building CNN Model")
-        # The feature extracts image features using convolution, batch normalization
-        # ReLU activations, and pooling to reduce dimensions
 
-        self.layer1 = nn.Conv2d(3, 96, kernel_size=11, stride=4)
-        self.layer2 = nn.Conv2d(96, 256, kernel_size=3, padding=1)
-        self.layer3 = nn.Conv2d(256, 384, kernel_size=3, padding=1)
-        self.layer4 = nn.Conv2d(384, 384, kernel_size=3, padding=1)
-        self.layer5 = nn.Conv2d(384, 256, kernel_size=3, padding=1)
+class ResNet(nn.Module):
+    def __init__(self):
+        super(ResNet, self).__init__()
+        self.resnet = torchvision.models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+        self.classifer = nn.Linear(self.resnet.fc.in_features, 15)
+        self.features = nn.Sequential(self.resnet.conv1,
+                              self.resnet.bn1,
+                              nn.ReLU(),
+                              nn.MaxPool2d(kernel_size=3, stride=2, padding=1, dilation=1, ceil_mode=False),
+                              self.resnet.layer1,
+                              self.resnet.layer2,
+                              self.resnet.layer3,
+                              self.resnet.layer4)
 
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(2)
+        self.avgpool = self.resnet.avgpool
+        self.gradients = None
 
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 96, kernel_size=11, stride=4),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),  # Reduces dimensions by a factor of 2
-
-            nn.Conv2d(96, 256, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
-
-            nn.Conv2d(256, 384, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(384, 384, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(384, 256, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            #nn.MaxPool2d(2)
-        )
-        """
-        The classifier runs FFNN layers to further learn features about the predictions
-        """
-
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(9216, 4096),
-            nn.ReLU(inplace=True),
-            nn.Linear(4096, 4096),
-            nn.ReLU(inplace=True),
-            nn.Linear(4096, 1000),
-            nn.ReLU(inplace=True),
-            # Outputs raw logits for each class.
-            nn.Linear(1000, num_classes)
-
-        )
         print("CNN model built successfully!")
         print("Model Architecture:")
         print(self)
 
-        self.gradients = None
-
     def activations_hook(self, grad):
         self.gradients = grad
-
-    def forward(self, x):
-        # x = self.layer1(x)
-        # x = self.relu(x)
-        # x = self.maxpool(x)
-        # x = self.layer2(x)
-        # x = self.relu(x)
-        # x = self.maxpool(x)
-        # x = self.layer3(x)
-        # x = self.relu(x)
-        # x = self.layer4(x)
-        # x = self.relu(x)
-        # x = self.layer5(x)
-        # x = self.relu(x)
-        x = self.features(x)
-
-        #if x.requires_grad:
-        h = x.register_hook(self.activations_hook)
-
-        x = self.maxpool(x)
-
-        x = self.classifier(x)
-        return x
 
     def get_activations_gradient(self):
         return self.gradients
 
     def get_activations(self, x):
         return self.features(x)
+
+    def forward(self, x):
+        x = self.features(x)
+        h = x.register_hook(self.activations_hook)
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.classifer(x)
+        return x
+
+
+
+# # Model Creation
+# class AlexNetCNN(nn.Module):
+#     def __init__(self, num_classes=15):
+#         super(AlexNetCNN, self).__init__()
+#         print("Building CNN Model")
+#
+#         self.pre = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+#         self.fc = nn.Linear(self.fc.in_features, num_classes)
+#
+#         # The feature extracts image features using convolution, batch normalization
+#         # ReLU activations, and pooling to reduce dimensions
+#
+#
+#         print("CNN model built successfully!")
+#         print("Model Architecture:")
+#         print(self)
+#
+#     def forward(self, x):
+#         x = self.pre(x)
+#         x = self.features(x)
+#         x = self.classifier(x)
+#         return x
 
 
 # Label Conversion Helper
@@ -201,6 +203,7 @@ def convert_labels_to_multihot(raw_labels, num_classes=14):
 # Training Loop
 def train_model(model, train_loader, transform_pipeline, device, num_epochs=5, saved_model = ""):
     if (saved_model != ""):
+        print("Loading Saved Model...")
         model.load_state_dict(torch.load(saved_model))
     epoch_losses = []
     epochs = []
@@ -211,18 +214,23 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5, s
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     model.train()
 
-    for epoch in range(num_epochs):
+    for epoch in range(1, num_epochs):
         print("\n---------------------------------------------")
-        print(f"Epoch {epoch + 1}/{num_epochs}")
-        epochs.append(epoch + 1)
+        print(f"Epoch {epoch}/{num_epochs}")
+        epochs.append(epoch)
         running_loss = 0.0
         batch_count = 0
         epoch_preds = []
         epoch_targets = []
 
+        # if (epoch % 10 == 0):
+        #     for group in optimizer.param_groups:
+        #         group['lr'] /= 10
+
         for batch in train_loader:
             batch_count += 1
-            print(f"\nProcessing batch {batch_count}...")
+            if batch_count % 10 == 0:
+                print(f"\nProcessing batch {batch_count}...")
 
             # Process images (assumes DataLoader returns a dict with key "images" as PIL images)
             pil_images = batch.get("images")
@@ -240,20 +248,37 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5, s
                 raise KeyError("No label key found in batch (expected 'labels' or 'findings').")
 
             # Convert raw labels into fixed-length multi-hot vectors.
-            labels = convert_labels_to_multihot(raw_labels, num_classes=15).float().to(device)
+            labels = convert_labels_to_multihot(raw_labels, num_classes=15).to(device)
 
             optimizer.zero_grad()
             outputs = model(images)
+
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
 
             running_loss += loss.item() * images.size(0)
-            print(f"  Batch {batch_count} Loss: {loss.item():.4f}")
+            if batch_count % 10 == 0:
+                print(f"  Batch {batch_count} Loss: {loss.item():.4f}")
+
+
+            outputs = torch.sigmoid(outputs)
+            predicted = np.zeros(outputs.shape)
+            maxes = outputs.float().argmax(dim=1)
 
             # Accumulate predictions and targets for metric calculation.
-            preds = (torch.sigmoid(outputs) > 0.5).float()
-            epoch_preds.append(preds.detach().cpu())
+            for i, m in enumerate(maxes):
+                if m.item() != 0:
+                    predicted[i] = (outputs.detach().cpu()[i] > 0.25).float()
+                    #Want to ensure no 0 predictiction if predicting other things
+                    predicted[i][0] = 0
+                else:
+                    #If most likely class is no finding ensure we only predict no finding
+                    predicted[i][0] = 1.0
+            #preds = (torch.sigmoid(outputs) > 0.5).float()
+
+            #epoch_preds.append(preds.detach().cpu())
+            epoch_preds.append(torch.tensor(predicted))
             epoch_targets.append(labels.detach().cpu())
 
         epoch_loss = running_loss / len(train_loader.dataset)
@@ -261,36 +286,39 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5, s
         epoch_preds = torch.cat(epoch_preds, dim=0).numpy()
         epoch_targets = torch.cat(epoch_targets, dim=0).numpy()
 
+        print(f"Saving Epoch {epoch} model as 'resnetInter.pth'")
+        torch.save(model.state_dict(), "resnetInter.pth")
+
 
         plt.plot(epoch_losses, label='loss')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
-        plt.savefig("AlexNet Loss Graph")
-
-        print("Saving model as 'AlexInter.pth'")
-        torch.save(model.state_dict(), "AlexInter.pth")
+        plt.savefig("Loss Graph2")
 
         # Calculating metrics
+        auc = roc_auc_score(epoch_targets, epoch_preds)
         f1_micro = f1_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
         f1_macro = f1_score(epoch_targets, epoch_preds, average='macro', zero_division=0)
         precision = precision_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
         recall = recall_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
         hamming = hamming_loss(epoch_targets, epoch_preds)
 
+
         print("\n=============================================")
-        print(f"Epoch {epoch + 1} completed.")
+        print(f"Epoch {epoch} completed.")
         print(f"Average Loss: {epoch_loss:.4f}")
         print(f"Precision (micro): {precision:.4f}")
         print(f"Recall (micro): {recall:.4f}")
         print(f"F1 Score (micro): {f1_micro:.4f}")
         print(f"F1 Score (macro): {f1_macro:.4f}")
         print(f"Hamming Loss: {hamming:.4f}")
+        print(f"AUC Loss: {auc:.4f}")
         print("=============================================\n")
 
     print("========== Training Loop Finished ==========")
-    print("Saving model as 'model.pth'")
-    torch.save(model.state_dict(), "Alex.pth")
+    print("Saving model as 'resnet.pth'")
     print("Loss values: " + str(epoch_losses))
+    torch.save(model.state_dict(), "resnet.pth")
 
 
 def test(model, test_loader, transform_pipeline, device, saved_model = ""):
@@ -304,11 +332,10 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
     ground_truth = []
     predictions = []
 
-    #Trying enabled gradient for GRAD-CAM
     with torch.set_grad_enabled(True):
-
         for i, batch in enumerate(test_loader):
-            print(f"Testing Batch #{i} of {len(test_loader)}")
+            if i % 50 == 0:
+                print(f"Testing Batch #{i} of {len(test_loader)}")
             # Process images (assumes DataLoader returns a dict with key "images" as PIL images)
             pil_images = batch.get("images")
             if pil_images is None:
@@ -329,21 +356,29 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
 
             outputs = model(images)
             outputs = torch.sigmoid(outputs)
-            predicted = (outputs > 0.5).float()
-
+            predicted = np.zeros(outputs.shape)
+            maxes = outputs.float().argmax(dim=1)
+            for i, m in enumerate(maxes):
+                if m.item() != 0:
+                    predicted[i] = (outputs.detach().cpu()[i] > 0.25).float()
+                    #Want to ensure no 0 predictiction if predicting other things
+                    predicted[i][0] = 0
+                else:
+                    #If most likely class is no finding ensure we only predict no finding
+                    predicted[i][0] = 1.0
+            #predicted = (outputs > 0.25).float()
             ground_truth.extend(labels.detach().cpu().numpy())
-            predictions.extend(predicted.detach().cpu().numpy())
+            predictions.extend(predicted)
 
 
     # Calculating metrics
+    auc = roc_auc_score(ground_truth, predictions)
 
-    #accuracy = accuracy_score(ground_truth, predictions)
     f1_micro = f1_score(ground_truth, predictions, average='micro', zero_division=0)
     f1_macro = f1_score(ground_truth, predictions, average='macro', zero_division=0)
     precision = precision_score(ground_truth, predictions, average='micro', zero_division=0)
     recall = recall_score(ground_truth, predictions, average='micro', zero_division=0)
     hamming = hamming_loss(ground_truth, predictions)
-    auc = roc_auc_score(ground_truth, predictions)
 
     print("\n=============================================")
     print(f"Testing Finished")
@@ -353,60 +388,36 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
     print(f"F1 Score (macro): {f1_macro:.4f}")
     print(f"Hamming Loss: {hamming:.4f}")
     print(f"AUC: {auc:.4f}")
-    #print(f"Accuracy: {accuracy:.4f}")
     print("=============================================\n")
 
-def visualize(model, test_loader, transform_pipeline, saved_model):
-    if (saved_model != ""):
-        model.load_state_dict(torch.load(saved_model))
+def visualize(model):
     model.eval()
     # Get the first conv layer
+    first_conv_layer = model.conv2
+
+    # Get the weights (filters) as a tensor
+    filters = first_conv_layer.weight.data.clone()
+
+    #Normalize the filters to 0-1
+    min_val = filters.min()
+    max_val = filters.max()
+    filters = (filters - min_val) / (max_val - min_val)
 
 
-    activation = {}
-
-    def get_activation(name):
-        def hook(model, input, output):
-            activation[name] = output.detach()
-        return hook
-
-    model.layer1.register_forward_hook(get_activation("features"))
-    for batch in test_loader:
-        orig_im = batch.get("images")[0]
-        images = batch.get("images")[0]
-        processed_images = [transform_pipeline(images)]
-        images = torch.stack(processed_images)
-        break
-    output = model(images)
-    act = activation["layer1"]
-    act2 = activation["layer5"]
-
-    fig, axarr = plt.subplots(4, 4, figsize=(12, 12))
-
-    for idx in range(16):  # Visualize first 16 feature maps
-        ax = axarr[idx // 4, idx % 4]
-        ax.imshow(act[0][idx].cpu(), cmap='viridis')
-        ax.axis('off')
-
+    num = 30
+    count = min(num, filters.shape[0])
+    plt.figure(figsize=(count * 2, 10))
+    for i in range(count):
+        f = filters[i]
+        if f.shape[0] == 3:
+            filter_img = f.permute(1, 2, 0)
+            plt.subplot(1, count, i + 1)
+            plt.imshow(filter_img)
+            plt.axis('off')
     plt.tight_layout()
     plt.show()
 
-    fig3, axarr3 = plt.subplots(4, 4, figsize=(12, 12))
 
-    for idx in range(16):  # Visualize first 16 feature maps
-        ax = axarr3[idx // 4, idx % 4]
-        ax.imshow(act2[0][idx].cpu(), cmap='viridis')
-        ax.axis('off')
-
-    plt.tight_layout()
-    plt.show()
-
-    fig2, ax2 = plt.subplots()
-    ax2.imshow(orig_im, cmap='viridis')
-    ax2.axis('off')
-
-    plt.tight_layout()
-    plt.show()
 
 
 def grad_cam(model, test_loader, transform_pipeline, device, saved_model):
@@ -416,19 +427,18 @@ def grad_cam(model, test_loader, transform_pipeline, device, saved_model):
 
     #Track Grads for GRAD-CAM
     with torch.set_grad_enabled(True):
-
         for batch in test_loader:
-            orig_im = batch.get("images")[14]
-            images = batch.get("images")[14]
+            orig_im = batch.get("images")[13]
+            images = batch.get("images")[13]
             processed_images = [transform_pipeline(images)]
             images = torch.stack(processed_images)
             images.requires_grad = True
             break
 
+        images.to(device)
         outputs = model(images)
         outputs = torch.sigmoid(outputs)
-        te = outputs.detach().cpu().numpy()
-        predicted = (outputs > 0.25).float()
+        predicted = outputs.float().argmax(dim=1)
         model.zero_grad()
         #Choose the class you want to analyze
         outputs[0, predicted].backward()
@@ -437,7 +447,7 @@ def grad_cam(model, test_loader, transform_pipeline, device, saved_model):
 
         pooled_gradients = torch.mean(gradients, dim=(0, 2, 3))
 
-        activations = model.get_activations(images).detach()
+        activations = model.get_activations(images).detach().cpu()
 
         for i in range(255):
             activations[:, i, :, :] *= pooled_gradients[i]
@@ -459,10 +469,11 @@ def grad_cam(model, test_loader, transform_pipeline, device, saved_model):
         # scale and convert to uint8
         img = (img * 255).astype(np.uint8)
 
+        name = finding_map[predicted.detach().cpu().numpy()[0]]
         superimposed_img = cv2.addWeighted(heatmap, 0.4, img, 0.6, 0)
-        cv2.imwrite('./map.jpg', superimposed_img)
+        cv2.imwrite(f'./{name}.jpg', superimposed_img)
         cv2.imwrite('./heatmap.jpg', heatmap)
-        cv2.imwrite('./img.jpg', orig_im)
+
 
 
 
@@ -472,12 +483,18 @@ def main():
     transform_pipeline = get_transforms()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-    model = AlexNetCNN(num_classes=15)
-    train_model(model, train_loader, transform_pipeline, device, num_epochs=20)
+    #model = AlexNetCNN(num_classes=15)\
+    num_classes = 15
+    #Pretrained on ImageNet
+    # model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+    # model.fc = nn.Linear(model.fc.in_features, num_classes)
+    model = ResNet()
+
+    train_model(model, train_loader, transform_pipeline, device, num_epochs=5, saved_model = "resnetInter.pth")
     print("========== Model Training is Complete ==========")
-    test(model, test_loader, transform_pipeline, device, saved_model = "Alex.pth")
-    #visualize(model, test_loader, transform_pipeline)
-    #grad_cam(model, test_loader, transform_pipeline, device,"Alex.pth")
+    test(model, test_loader, transform_pipeline, device, saved_model = "resnetInter.pth")
+    #visualize(model)
+    #grad_cam(model=model, test_loader=test_loader, transform_pipeline=transform_pipeline,device=device,saved_model="resnet.pth")
 
 
 
@@ -512,19 +529,4 @@ Accuracy: 0.3550
 =============================================
 
 Accuracy: 35.500
-"""
-
-
-
-"""
-10 Epoch LR 0.01 Batch 64 Current Model pth for resnet.pth
-=============================================
-Testing Finished
-Precision (micro): 0.5613
-Recall (micro): 0.1513
-F1 Score (micro): 0.2384
-F1 Score (macro): 0.0638
-Hamming Loss: 0.0927
-AUC: 0.5170
-=============================================
 """

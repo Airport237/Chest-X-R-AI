@@ -1,15 +1,27 @@
+# Vision Transformer (ViT) for ChestX-ray14 - Final Version with Explicit Class 0 Dropping
+
+import ssl
+
+ssl._create_default_https_context = ssl._create_unverified_context  # macOS SSL fix
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import deeplake
 import matplotlib.pyplot as plt
+import random
+import warnings
 
 from torchvision import transforms, models
-from sklearn.metrics import f1_score, precision_score, recall_score, hamming_loss, roc_auc_score
+from torchvision.models.vision_transformer import ViT_B_16_Weights
+from sklearn.metrics import f1_score, precision_score, recall_score, hamming_loss, roc_auc_score, confusion_matrix
+from sklearn.exceptions import UndefinedMetricWarning
+
+warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
 
-# Collate Function
+# ================= Custom Collate ================= #
 def custom_collate_fn(batch):
     collated = {}
     for key in batch[0].keys():
@@ -17,36 +29,80 @@ def custom_collate_fn(batch):
     return collated
 
 
-# Filter Class 0
-def filter_class_0_samples(ds, keep_ratio=0.2, max_samples=50000):
-    class0_indices, other_indices = [], []
-    for i in range(min(len(ds), max_samples)):
-        labels = ds[i]['labels'].numpy()
-        label_indices = np.where(labels == 1)[0]
-        if 0 in label_indices:
-            if np.random.rand() < keep_ratio:
-                class0_indices.append(i)
-        elif len(label_indices) > 0:
+# ========== Data Analysis Helper ========== #
+def print_class_distribution(ds, name="Dataset"):
+    label_tensor = 'labels' if 'labels' in ds.tensors else 'findings'
+    class_counts = [0] * 15
+
+    for i, sample in enumerate(ds):
+        labels = sample[label_tensor].numpy()
+        indices = np.where(labels == 1)[0]
+        for idx in indices:
+            class_counts[idx] += 1
+
+    print(f"Class Distribution in {name}: ")
+    for i, count in enumerate(class_counts):
+        print(f"  Class {i}: {count} samples")
+
+        # ========== Explicit Class 0 Drop Function ========== #
+
+
+def drop_class_0_samples(ds, drop_count):
+    label_tensor = 'labels' if 'labels' in ds.tensors else 'findings'
+    class_0_indices = []
+    other_indices = []
+
+    print("Scanning dataset for class 0 samples...")
+    for i, sample in enumerate(ds):
+        labels = sample[label_tensor].numpy()
+        if 0 in np.where(labels == 1)[0]:
+            class_0_indices.append(i)
+        else:
             other_indices.append(i)
-    return class0_indices + other_indices
+
+    print(f"Total class 0 samples found: {len(class_0_indices)}")
+    print(f"Dropping {drop_count} class 0 samples...")
+
+    if drop_count > len(class_0_indices):
+        raise ValueError(f"Only {len(class_0_indices)} class 0 samples available to drop, but requested {drop_count}")
+
+    retained_class_0_indices = class_0_indices[drop_count:]
+    final_indices = retained_class_0_indices + other_indices
+    print(f"Final dataset size after drop: {len(final_indices)}")
+    return ds[final_indices]
 
 
-# Data Loader with Filtering
-def custom_get_data_filtered(keep_ratio=0.2):
+# ========== Load & Filter Dataset ========== #
+def custom_get_data_filtered():
+    print("Loading datasets from DeepLake...")
     ds_train = deeplake.load('hub://activeloop/nih-chest-xray-train')
     ds_test = deeplake.load('hub://activeloop/nih-chest-xray-test')
-    train_keep = filter_class_0_samples(ds_train, keep_ratio=keep_ratio)
-    test_keep = filter_class_0_samples(ds_test, keep_ratio=0.5)
-    ds_train_filtered = ds_train[train_keep]
-    ds_test_filtered = ds_test[test_keep]
-    train_loader = ds_train_filtered.pytorch(batch_size=32, num_workers=2, shuffle=True,
+
+    print("Analyzing TRAIN dataset before dropping...")
+    print_class_distribution(ds_train, "Train Set")
+
+    print("Analyzing TEST dataset before dropping...")
+    print_class_distribution(ds_test, "Test Set")
+    print("Loading datasets from DeepLake...")
+    ds_train = deeplake.load('hub://activeloop/nih-chest-xray-train')
+    ds_test = deeplake.load('hub://activeloop/nih-chest-xray-test')
+
+    print("Dropping 45000 samples from class 0 in training set...")
+    ds_train_filtered = drop_class_0_samples(ds_train, drop_count=45000)
+
+    print("Dropping 5000 samples from class 0 in test set...")
+    ds_test_filtered = drop_class_0_samples(ds_test, drop_count=5000)
+
+    train_loader = ds_train_filtered.pytorch(batch_size=32, num_workers=0, shuffle=True,
                                              decode_method={"images": "pil"}, collate_fn=custom_collate_fn)
     test_loader = ds_test_filtered.pytorch(batch_size=32, shuffle=False,
                                            decode_method={"images": "pil"}, collate_fn=custom_collate_fn)
-    return train_loader, test_loader
+
+    print("Data loaders created successfully.")
+    return train_loader, test_loader, ds_test_filtered
 
 
-# ViT Preprocessing
+# ========== Transforms for ViT ========== #
 def get_vit_transforms():
     return transforms.Compose([
         transforms.Grayscale(num_output_channels=3),
@@ -56,31 +112,35 @@ def get_vit_transforms():
     ])
 
 
-# ViT Binary Classifier
+# ========== Vision Transformer Model ========== #
 class ViTBinaryClassifier(nn.Module):
     def __init__(self):
         super().__init__()
-        self.vit = models.vit_b_16(pretrained=True)
-        self.vit.heads = nn.Linear(self.vit.heads.head.in_features, 1)
+        weights = ViT_B_16_Weights.IMAGENET1K_V1
+        self.vit = models.vit_b_16(weights=weights)
+        in_features = self.vit.heads[0].in_features
+        self.vit.heads = nn.Linear(in_features, 1)
 
     def forward(self, x):
         return self.vit(x)
 
 
-# Label Conversion (one-vs-all)
+# ========== Convert Multihot to Binary Label ========== #
 def convert_to_one_vs_all_labels(raw_labels, class_idx):
     binary_labels = []
     for label_list in raw_labels:
-        match = any(int(item) == class_idx for item in label_list)
+        label_tensor = label_list if isinstance(label_list, list) else label_list.tolist()
+        match = any(int(item) == class_idx for item in label_tensor)
         binary_labels.append(torch.tensor([1.0 if match else 0.0]))
     return torch.stack(binary_labels)
 
 
-# Training Loop
-def train_model(model, train_loader, transform, device, class_idx, epochs=5):
+# ========== Training Loop ========== #
+def train_model(model, train_loader, transform, device, class_idx, epochs=15):
     model.to(device)
+    pos_weight = torch.tensor([5.0]).to(device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
-    criterion = nn.BCEWithLogitsLoss()
     train_losses = []
 
     model.train()
@@ -88,7 +148,8 @@ def train_model(model, train_loader, transform, device, class_idx, epochs=5):
         total_loss = 0
         for batch in train_loader:
             images = torch.stack([transform(img) for img in batch['images']]).to(device)
-            labels = convert_to_one_vs_all_labels(batch['labels'], class_idx).to(device)
+            label_key = 'labels' if 'labels' in batch else 'findings'
+            labels = convert_to_one_vs_all_labels(batch[label_key], class_idx).to(device)
             optimizer.zero_grad()
             outputs = model(images).squeeze()
             loss = criterion(outputs, labels.squeeze())
@@ -101,7 +162,7 @@ def train_model(model, train_loader, transform, device, class_idx, epochs=5):
     return train_losses
 
 
-# Evaluation
+# ========== Evaluation Loop ========== #
 def evaluate_model(model, test_loader, transform, device, class_idx):
     model.eval()
     all_preds, all_probs, all_labels = [], [], []
@@ -111,7 +172,8 @@ def evaluate_model(model, test_loader, transform, device, class_idx):
     with torch.no_grad():
         for batch in test_loader:
             images = torch.stack([transform(img) for img in batch['images']]).to(device)
-            labels = convert_to_one_vs_all_labels(batch['labels'], class_idx).to(device)
+            label_key = 'labels' if 'labels' in batch else 'findings'
+            labels = convert_to_one_vs_all_labels(batch[label_key], class_idx).to(device)
             outputs = model(images).squeeze()
             probs = torch.sigmoid(outputs)
             preds = (probs > 0.5).float()
@@ -124,26 +186,32 @@ def evaluate_model(model, test_loader, transform, device, class_idx):
     y_true = np.array(all_labels)
     y_pred = np.array(all_preds)
     y_score = np.array(all_probs)
+    avg_loss = np.sum(test_losses) / len(test_loader.dataset)
 
-    precision = precision_score(y_true, y_pred, zero_division=0)
-    recall = recall_score(y_true, y_pred, zero_division=0)
+    pos_label = 1 if class_idx != 0 else 0
+
+    precision = precision_score(y_true, y_pred, pos_label=pos_label, zero_division=0)
+    recall = recall_score(y_true, y_pred, pos_label=pos_label, zero_division=0)
     f1_micro = f1_score(y_true, y_pred, average='micro', zero_division=0)
     f1_macro = f1_score(y_true, y_pred, average='macro', zero_division=0)
     hamming = hamming_loss(y_true, y_pred)
-    auc = roc_auc_score(y_true, y_score)
-    avg_loss = np.sum(test_losses) / len(test_loader.dataset)
+    try:
+        auc = roc_auc_score(y_true, y_score)
+    except:
+        auc = float('nan')
 
     print(f"Test Loss: {avg_loss:.4f}")
     print(f"Precision: {precision:.4f}, Recall: {recall:.4f}")
     print(f"F1 Micro: {f1_micro:.4f}, F1 Macro: {f1_macro:.4f}")
     print(f"Hamming Loss: {hamming:.4f}, AUC Score: {auc:.4f}")
+    print("Confusion Matrix:\n", confusion_matrix(y_true, y_pred))
 
     return avg_loss, precision, recall, f1_micro, f1_macro, hamming, auc
 
 
-# Run One-vs-All for Each Class
-def run_one_vs_all(classes=range(15), epochs=5):
-    train_loader, test_loader = custom_get_data_filtered()
+# ========== Run for All Classes ========== #
+def run_one_vs_all(classes=range(15), epochs=15):
+    train_loader, test_loader, ds_test = custom_get_data_filtered()
     transform = get_vit_transforms()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -155,9 +223,8 @@ def run_one_vs_all(classes=range(15), epochs=5):
             model, test_loader, transform, device, class_idx
         )
 
-        # Save model and plot
-        torch.save(model.state_dict(), f"vit_class_{class_idx}.pth")
-
+        model_path = f"vit_class_{class_idx}.pth"
+        torch.save(model.state_dict(), model_path)
         plt.figure(figsize=(8, 4))
         plt.plot(train_losses, label='Train Loss')
         plt.axhline(y=test_loss, color='red', linestyle='--', label='Test Loss')
@@ -168,6 +235,23 @@ def run_one_vs_all(classes=range(15), epochs=5):
         plt.savefig(f"loss_curve_class_{class_idx}.png")
         plt.close()
 
+        # Live Testing on Random Samples
+        print(f"\nLive Testing for Class {class_idx}:")
+        model.load_state_dict(torch.load(model_path))
+        model.eval()
+        model.to(device)
+        for i in random.sample(range(len(ds_test)), 5):
+            img = ds_test[i]['images'].numpy()
+            img = transforms.ToPILImage()(img)
+            label_raw = ds_test[i]['labels'] if 'labels' in ds_test.tensors else ds_test[i]['findings']
+            label_val = 1.0 if class_idx in label_raw else 0.0
+            x = transform(img).unsqueeze(0).to(device)
+            with torch.no_grad():
+                out = model(x).squeeze()
+                prob = torch.sigmoid(out).item()
+                pred = 1 if prob > 0.5 else 0
+            print(f"  Sample #{i}: Predicted={pred} | True={int(label_val)} | Confidence={prob:.3f}")
 
-# Run it
+
+# ========== Start Training ========== #
 run_one_vs_all(classes=range(15), epochs=15)

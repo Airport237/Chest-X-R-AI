@@ -5,8 +5,9 @@ import deeplake
 from matplotlib import pyplot as plt
 from torchvision import models
 from torchvision import transforms
-from sklearn.metrics import f1_score, precision_score, recall_score, hamming_loss, accuracy_score
+from sklearn.metrics import f1_score, precision_score, recall_score, hamming_loss, accuracy_score, roc_auc_score
 import numpy as np
+
 def custom_collate_fn(batch):
     """
     DeepLake's default collation method attempts to stack tensors, which causes errors when the
@@ -106,7 +107,7 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
     model.to(device)
     print(device)
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001,weight_decay=1e-5)
     model.train()
 
     for epoch in range(num_epochs):
@@ -174,7 +175,7 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
         precision = precision_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
         recall = recall_score(epoch_targets, epoch_preds, average='micro', zero_division=0)
         hamming = hamming_loss(epoch_targets, epoch_preds)
-
+        auc = roc_auc_score(epoch_targets, epoch_preds)
         print("\n=============================================")
 
 
@@ -183,6 +184,7 @@ def train_model(model, train_loader, transform_pipeline, device, num_epochs=5):
         print(f"F1 Score (macro): {f1_macro:.4f}")
         print(f"Hamming Loss: {hamming:.4f}")
         print(f"Accuracy: {accuracy:.4f}")
+        print(f'AUC: {auc:.4f}')
         print("=============================================\n")
 
     print("========== Training Loop Finished ==========")
@@ -239,6 +241,7 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
     precision = precision_score(ground_truth, predictions, average='micro', zero_division=0)
     recall = recall_score(ground_truth, predictions, average='micro', zero_division=0)
     hamming = hamming_loss(ground_truth, predictions)
+    auc = roc_auc_score(ground_truth, predictions, average='macro')
 
 
     print("\n=============================================")
@@ -249,6 +252,7 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
     print(f"F1 Score (macro): {f1_macro:.4f}")
     print(f"Hamming Loss: {hamming:.4f}")
     print(f"Accuracy: {accuracy:.4f}")
+    print(f"Area Under Curve (AUC): {auc:.4f}")
     print("=============================================\n")
 
 def main():
@@ -259,14 +263,20 @@ def main():
     print(f"Using device: {device}")
     num_classes = 15
     model = models.inception_v3(pretrained=True, aux_logits=True)
+    freeze = True
+    for name, param in model.named_parameters():
+        if "Mixed_7a" in name:
+            freeze = False  # start unfreezing here
+        param.requires_grad = not freeze
+
+
     model.fc = nn.Linear(model.fc.in_features, num_classes)
     model.AuxLogits.fc = nn.Linear(model.AuxLogits.fc.in_features, num_classes)
-    #print(model)
-    #train_model(model, train_loader, transform_pipeline, device, num_epochs=22)
+    print(model)
+    train_model(model, train_loader, transform_pipeline, device, num_epochs=20)
 
     print("========== Model Training is Complete ==========")
     test(model, test_loader, transform_pipeline, device, saved_model = "model.pth")
-
 
 if __name__ == "__main__":
     main()

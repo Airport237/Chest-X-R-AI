@@ -294,10 +294,10 @@ def train_model(model, train_loader, test_loader, transform_pipeline, device, nu
 
 
     print("========== Training Loop Finished ==========")
-    print("Saving model as 'resnet.pth'")
+    print("Saving model as 'resnetNot.pth'")
     print("Loss values: " + str(epoch_losses))
     print("AUC values: " + str(AUCs))
-    torch.save(model.state_dict(), "resnet.pth")
+    torch.save(model.state_dict(), "resnetNot.pth")
 
 
 
@@ -381,7 +381,6 @@ def grad_cam(model, test_loader, transform_pipeline, device, saved_model):
     #Track Grads for GRAD-CAM
     with torch.set_grad_enabled(True):
         for batch in test_loader:
-            orig_im = batch.get("images")[13]
             images = batch.get("images")[13]
             processed_images = [transform_pipeline(images)]
             images = torch.stack(processed_images)
@@ -415,11 +414,9 @@ def grad_cam(model, test_loader, transform_pipeline, device, saved_model):
         heatmap = np.uint8(255 * heatmap)
         heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
 
-        #Justi grabs one imgage for now
+        #Just grabs one imgage
         img = images.detach().cpu().numpy()[0]
-        # convert to [H, W, C]
         img = np.transpose(img, (1, 2, 0))
-        # scale and convert to uint8
         img = (img * 255).astype(np.uint8)
 
         name = finding_map[predicted.detach().cpu().numpy()[0]]
@@ -436,17 +433,11 @@ def main():
     transform_pipeline = get_transforms()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-    #model = AlexNetCNN(num_classes=15)\
-    num_classes = 15
-    #Pretrained on ImageNet
-    # model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
-    # model.fc = nn.Linear(model.fc.in_features, num_classes)
     model = ResNet()
-    #, saved_model = "resnetInterNot.pth"
     train_model(model, train_loader, test_loader, transform_pipeline, device, num_epochs=10)
     print("========== Model Training is Complete ==========")
-    test(model, test_loader, transform_pipeline, device, saved_model = "resnetInterNot.pth")
-    #grad_cam(model=model, test_loader=test_loader, transform_pipeline=transform_pipeline,device=device,saved_model="resnet.pth")
+    test(model, test_loader, transform_pipeline, device, saved_model = "resnetNot.pth")
+    grad_cam(model=model, test_loader=test_loader, transform_pipeline=transform_pipeline,device=device,saved_model="resnetNot.pth")
 
 
 

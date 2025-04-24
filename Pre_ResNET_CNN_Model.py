@@ -359,32 +359,40 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
     print(f"AUC: {auc:.4f}")
     print("=============================================\n")
 
-def visualize(model):
+def visualize(model, test_loader, transform_pipeline, device, saved_model):
+    if (saved_model != ""):
+        model.load_state_dict(torch.load(saved_model))
     model.eval()
-    # Get the first conv layer
-    first_conv_layer = model.conv2
 
-    # Get the weights (filters) as a tensor
-    filters = first_conv_layer.weight.data.clone()
+    # Track Grads for GRAD-CAM
+    with torch.set_grad_enabled(True):
+        for batch in test_loader:
+            orig_im = batch.get("images")[13]
+            images = batch.get("images")[13]
+            processed_images = [transform_pipeline(images)]
+            images = torch.stack(processed_images)
+            images.requires_grad = True
+            break
 
-    #Normalize the filters to 0-1
-    min_val = filters.min()
-    max_val = filters.max()
-    filters = (filters - min_val) / (max_val - min_val)
+        images.to(device)
+        outputs = model(images)
+        maps = model.get_activations(images).squeeze(0)
 
+        number = min(64, maps.shape[0])
 
-    num = 30
-    count = min(num, filters.shape[0])
-    plt.figure(figsize=(count * 2, 10))
-    for i in range(count):
-        f = filters[i]
-        if f.shape[0] == 3:
-            filter_img = f.permute(1, 2, 0)
-            plt.subplot(1, count, i + 1)
-            plt.imshow(filter_img)
-            plt.axis('off')
-    plt.tight_layout()
-    plt.show()
+        fig, axes = plt.subplots(int(number ** 0.5), int(number ** 0.5), figsize=(10, 10))
+        fig.suptitle("Activation Maps")
+
+        for i in range(number):
+            row, col = divmod(i, int(number ** 0.5))
+            ax = axes[row][col]
+            ax.imshow(maps[i].cpu().detach().numpy(), cmap='viridis')
+            ax.axis('off')
+
+        plt.tight_layout()
+        plt.show()
+        fig.savefig("Activation Maps")
+
 
 
 
@@ -431,11 +439,9 @@ def grad_cam(model, test_loader, transform_pipeline, device, saved_model):
         heatmap = np.uint8(255 * heatmap)
         heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
 
-        #Justi grabs one imgage for now
+        #Justi grabs one imgage
         img = images.detach().cpu().numpy()[0]
-        # convert to [H, W, C]
         img = np.transpose(img, (1, 2, 0))
-        # scale and convert to uint8
         img = (img * 255).astype(np.uint8)
 
         name = finding_map[predicted.detach().cpu().numpy()[0]]
@@ -452,18 +458,13 @@ def main():
     transform_pipeline = get_transforms()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-    #model = AlexNetCNN(num_classes=15)\
-    num_classes = 15
-    #Pretrained on ImageNet
-    # model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
-    # model.fc = nn.Linear(model.fc.in_features, num_classes)
     model = ResNet()
 
     train_model(model, train_loader, transform_pipeline, device, num_epochs=5, saved_model = "resnetInter.pth")
     print("========== Model Training is Complete ==========")
     test(model, test_loader, transform_pipeline, device, saved_model = "resnetInter.pth")
-    #visualize(model)
-    #grad_cam(model=model, test_loader=test_loader, transform_pipeline=transform_pipeline,device=device,saved_model="resnet.pth")
+    visualize(model, test_loader=test_loader, transform_pipeline=transform_pipeline,device=device,saved_model="resnet.pth")
+    grad_cam(model=model, test_loader=test_loader, transform_pipeline=transform_pipeline,device=device,saved_model="resnet.pth")
 
 
 

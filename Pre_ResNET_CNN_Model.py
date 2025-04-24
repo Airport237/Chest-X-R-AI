@@ -148,30 +148,6 @@ class ResNet(nn.Module):
 
 
 
-# # Model Creation
-# class AlexNetCNN(nn.Module):
-#     def __init__(self, num_classes=15):
-#         super(AlexNetCNN, self).__init__()
-#         print("Building CNN Model")
-#
-#         self.pre = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
-#         self.fc = nn.Linear(self.fc.in_features, num_classes)
-#
-#         # The feature extracts image features using convolution, batch normalization
-#         # ReLU activations, and pooling to reduce dimensions
-#
-#
-#         print("CNN model built successfully!")
-#         print("Model Architecture:")
-#         print(self)
-#
-#     def forward(self, x):
-#         x = self.pre(x)
-#         x = self.features(x)
-#         x = self.classifier(x)
-#         return x
-
-
 # Label Conversion Helper
 def convert_labels_to_multihot(raw_labels, num_classes=14):
     """
@@ -190,13 +166,6 @@ def convert_labels_to_multihot(raw_labels, num_classes=14):
                 continue
             if 0 <= idx < num_classes:
                 multi_hot[idx] = 1.0
-        # else:
-        #     try:
-        #         idx = int(label)
-        #         if 0 <= idx < num_classes:
-        #             multi_hot[idx] = 1.0
-        #     except Exception:
-        #         pass
         processed_labels.append(multi_hot)
     return torch.stack(processed_labels)
 
@@ -500,33 +469,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-##########################
-# RESULTS
-"""
-=============================================
-Epoch 5 completed.
-Average Loss: 0.1989
-Precision (micro): 0.5837
-Recall (micro): 0.4801
-F1 Score (micro): 0.5268
-F1 Score (macro): 0.0490
-Hamming Loss: 0.0694
-Accuracy: 0.5796
-=============================================
-"""
-##########################
-
-"""
-=============================================
-Testing Finished
-Precision (micro): 0.3550
-Recall (micro): 0.2459
-F1 Score (micro): 0.2905
-F1 Score (macro): 0.0349
-Hamming Loss: 0.1156
-Accuracy: 0.3550
-=============================================
-
-Accuracy: 35.500
-"""

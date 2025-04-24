@@ -477,8 +477,8 @@ def main():
     # model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
     # model.fc = nn.Linear(model.fc.in_features, num_classes)
     model = ResNet()
-    #, saved_model = "resnetInterNot.pth"
-    train_model(model, train_loader, test_loader, transform_pipeline, device, num_epochs=10)
+    #
+    train_model(model, train_loader, test_loader, transform_pipeline, device, num_epochs=10, saved_model = "resnetInterNot.pth")
     print("========== Model Training is Complete ==========")
     test(model, test_loader, transform_pipeline, device, saved_model = "resnetInterNot.pth")
     #visualize(model)

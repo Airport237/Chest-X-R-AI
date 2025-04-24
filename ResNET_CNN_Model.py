@@ -161,13 +161,7 @@ def convert_labels_to_multihot(raw_labels, num_classes=14):
                 continue
             if 0 <= idx < num_classes:
                 multi_hot[idx] = 1.0
-        # else:
-        #     try:
-        #         idx = int(label)
-        #         if 0 <= idx < num_classes:
-        #             multi_hot[idx] = 1.0
-        #     except Exception:
-        #         pass
+
         processed_labels.append(multi_hot)
     return torch.stack(processed_labels)
 
@@ -378,35 +372,6 @@ def test(model, test_loader, transform_pipeline, device, saved_model = ""):
     print("=============================================\n")
     return auc
 
-def visualize(model):
-    model.eval()
-    # Get the first conv layer
-    first_conv_layer = model.conv2
-
-    # Get the weights (filters) as a tensor
-    filters = first_conv_layer.weight.data.clone()
-
-    #Normalize the filters to 0-1
-    min_val = filters.min()
-    max_val = filters.max()
-    filters = (filters - min_val) / (max_val - min_val)
-
-
-    num = 30
-    count = min(num, filters.shape[0])
-    plt.figure(figsize=(count * 2, 10))
-    for i in range(count):
-        f = filters[i]
-        if f.shape[0] == 3:
-            filter_img = f.permute(1, 2, 0)
-            plt.subplot(1, count, i + 1)
-            plt.imshow(filter_img)
-            plt.axis('off')
-    plt.tight_layout()
-    plt.show()
-
-
-
 
 def grad_cam(model, test_loader, transform_pipeline, device, saved_model):
     if (saved_model != ""):
@@ -481,7 +446,6 @@ def main():
     train_model(model, train_loader, test_loader, transform_pipeline, device, num_epochs=10)
     print("========== Model Training is Complete ==========")
     test(model, test_loader, transform_pipeline, device, saved_model = "resnetInterNot.pth")
-    #visualize(model)
     #grad_cam(model=model, test_loader=test_loader, transform_pipeline=transform_pipeline,device=device,saved_model="resnet.pth")
 
 
@@ -489,32 +453,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-##########################
-# RESULTS
-"""
-=============================================
-Epoch 5 completed.
-Average Loss: 0.1989
-Precision (micro): 0.5837
-Recall (micro): 0.4801
-F1 Score (micro): 0.5268
-F1 Score (macro): 0.0490
-Hamming Loss: 0.0694
-Accuracy: 0.5796
-=============================================
-"""
-##########################
-
-"""
-=============================================
-Testing Finished
-Precision (micro): 0.3550
-Recall (micro): 0.2459
-F1 Score (micro): 0.2905
-F1 Score (macro): 0.0349
-Hamming Loss: 0.1156
-Accuracy: 0.3550
-=============================================
-
-Accuracy: 35.500
-"""
